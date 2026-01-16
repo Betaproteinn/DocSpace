@@ -1,0 +1,545 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DocSpace - Local Document Search v1 </title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        theme: {
+                            bg: '#FAFAFA',
+                            surface: '#FFFFFF',
+                            text: '#1A1A1A',
+                            subtext: '#737373',
+                            border: '#E5E5E5',
+                            primary: '#4A4A4A',
+                            primaryHover: '#2E2E2E',
+                            stripe: '#FDFDFD',
+                            header: '#FFFFFF',
+                            headerText: '#999999',
+                            red: '#D93025',
+                            redBg: '#FFF5F5',
+                        }
+                    },
+                    boxShadow: {
+                        'subtle': '0 1px 2px rgba(0,0,0,0.03)',
+                        'float': '0 8px 30px rgba(0,0,0,0.12)',
+                    },
+                    borderRadius: {
+                        'DEFAULT': '6px',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { 
+            font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background-color: #FAFAFA; 
+            color: #1A1A1A; 
+            -webkit-font-smoothing: antialiased;
+        }
+        
+        .row-selected {
+            background-color: #4A4A4A !important;
+            color: white !important;
+        }
+        .row-selected td, 
+        .row-selected .text-gray-400,
+        .row-selected .text-theme-subtext, 
+        .row-selected .text-theme-text,
+        .row-selected svg {
+            color: white !important;
+            opacity: 1;
+        }
+        
+        .data-row:nth-child(even) { background-color: #FCFCFC; }
+        
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #D4D4D4; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #A3A3A3; }
+        
+        .highlight { 
+            background-color: #FFE600; 
+            color: #000;
+            font-weight: 600;
+            padding: 0 2px;
+            border-radius: 2px;
+        }
+        
+        .markdown-preview {
+            font-family: "JetBrains Mono", "SF Mono", "Menlo", monospace;
+            line-height: 1.7;
+            color: #333;
+            font-size: 14px;
+        }
+
+        @keyframes modal-in {
+            from { opacity: 0; transform: scale(0.98); }
+            to { opacity: 1; transform: scale(1); }
+        }
+        .modal-content {
+            animation: modal-in 0.15s ease-out forwards;
+        }
+
+        .checkbox-custom { 
+            appearance: none;
+            background-color: #fff;
+            margin: 0;
+            font: inherit;
+            color: currentColor;
+            width: 16px;
+            height: 16px;
+            border: 1.5px solid #D1D1D1;
+            border-radius: 4px;
+            display: grid;
+            place-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .checkbox-custom::before {
+            content: "";
+            width: 8px;
+            height: 8px;
+            transform: scale(0);
+            transition: 120ms transform ease-in-out;
+            box-shadow: inset 1em 1em white;
+            transform-origin: center;
+            clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+        }
+        .checkbox-custom:checked {
+            background-color: #4A4A4A;
+            border-color: #4A4A4A;
+        }
+        .checkbox-custom:checked::before {
+            transform: scale(1);
+        }
+        
+        .row-selected .checkbox-custom {
+            border-color: white;
+            background-color: white;
+        }
+        .row-selected .checkbox-custom:checked {
+            background-color: white;
+        }
+        .row-selected .checkbox-custom:checked::before {
+            box-shadow: inset 1em 1em #4A4A4A;
+        }
+
+        .app-container { max-width: 1200px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useRef, useEffect, useLayoutEffect } = React;
+
+        const ALLOWED_EXTENSIONS = [
+            '.md', '.markdown', '.txt', '.text', '.json', '.csv', '.xml', 
+            '.yaml', '.yml', '.js', '.jsx', '.ts', '.tsx', '.py', '.java', 
+            '.c', '.cpp', '.h', '.css', '.html', '.sql', '.log'
+        ];
+
+        // 多语言字典
+        const I18N = {
+            zh: {
+                langName: '中文',
+                remove: '移除',
+                import: '导入文件夹',
+                searchPlaceholder: '输入关键字检索...',
+                processing: '处理中...',
+                noContent: '暂无内容，请导入文件',
+                thName: '文件名 (双击预览)',
+                thSize: '大小',
+                thType: '格式',
+                searchResult: '搜索结果',
+                totalItemsSuffix: '个项目',
+                selectedSuffix: '已选',
+                noSelection: '未选择',
+                download: '下载',
+                confirmDelete: (n) => `确认移除这 ${n} 个文件？`
+            },
+            en: {
+                langName: 'English',
+                remove: 'Remove',
+                import: 'Import Folder',
+                searchPlaceholder: 'Search keywords...',
+                processing: 'Processing...',
+                noContent: 'No content, please import files',
+                thName: 'Filename (Double click)',
+                thSize: 'Size',
+                thType: 'Type',
+                searchResult: 'Search Results',
+                totalItemsSuffix: 'Items',
+                selectedSuffix: 'Selected',
+                noSelection: 'No Selection',
+                download: 'Download',
+                confirmDelete: (n) => `Remove ${n} files?`
+            },
+            ja: {
+                langName: '日本語',
+                remove: '削除',
+                import: 'フォルダを開く',
+                searchPlaceholder: 'キーワード検索...',
+                processing: '処理中...',
+                noContent: 'コンテンツなし、インポートしてください',
+                thName: 'ファイル名 (ダブルクリック)',
+                thSize: 'サイズ',
+                thType: '種類',
+                searchResult: '検索結果',
+                totalItemsSuffix: '項目',
+                selectedSuffix: '選択済み',
+                noSelection: '未選択',
+                download: '保存',
+                confirmDelete: (n) => `${n} 個のファイルを削除しますか？`
+            }
+        };
+
+        const formatBytes = (bytes, decimals = 1) => {
+            if (!+bytes) return '0 B';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['B', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return `${parseFloat((bytes / Math.pow(k, i)).toFixed(dm))} ${sizes[i]}`;
+        };
+
+        const IconFolder = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>;
+        const IconSearch = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>;
+        const IconFile = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>;
+        const IconClose = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>;
+        const IconDownload = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>;
+        const IconPlus = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const IconMinus = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>;
+        const IconTrash = () => <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>;
+        const IconGlobe = () => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>;
+
+        function PreviewModal({ file, onClose, searchTerm, t }) {
+            const [zoom, setZoom] = useState(1);
+            const firstMatchRef = useRef(null);
+
+            useEffect(() => {
+                const handleEsc = (e) => { if (e.key === 'Escape') onClose(); };
+                window.addEventListener('keydown', handleEsc);
+                return () => window.removeEventListener('keydown', handleEsc);
+            }, [onClose]);
+
+            useLayoutEffect(() => {
+                if (searchTerm && firstMatchRef.current) {
+                    const timer = setTimeout(() => {
+                        firstMatchRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    }, 250);
+                    return () => clearTimeout(timer);
+                }
+            }, [searchTerm, file]);
+
+            const handleDownload = () => {
+                const blob = new Blob([file.content], { type: 'text/plain' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = file.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            const zoomIn = () => setZoom(prev => Math.min(prev + 0.1, 2.0));
+            const zoomOut = () => setZoom(prev => Math.max(prev - 0.1, 0.5));
+
+            const renderContent = () => {
+                if (!searchTerm || !searchTerm.trim()) return file.content;
+                const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const regex = new RegExp(`(${escapedTerm})`, 'gi');
+                const parts = file.content.split(regex);
+                let firstMatchFound = false;
+                return parts.map((part, i) => {
+                    if (part.toLowerCase() === searchTerm.toLowerCase()) {
+                        const isFirst = !firstMatchFound;
+                        if (isFirst) firstMatchFound = true;
+                        return <span key={i} className="highlight" ref={isFirst ? firstMatchRef : null}>{part}</span>;
+                    }
+                    return part;
+                });
+            };
+
+            if (!file) return null;
+
+            return (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-8">
+                    <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={onClose}></div>
+                    <div className="modal-content relative bg-white w-full max-w-5xl h-[85vh] rounded-lg shadow-float flex flex-col overflow-hidden">
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 bg-white z-10">
+                            <div className="flex items-center gap-3">
+                                <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-md transition-colors text-gray-500">
+                                    <IconClose />
+                                </button>
+                                <span className="font-semibold text-gray-800 truncate max-w-md">{file.name}</span>
+                            </div>
+                            <button onClick={handleDownload} className="text-gray-600 hover:text-black hover:bg-gray-50 border border-gray-200 px-3 py-1.5 rounded-md text-xs font-medium transition-all flex items-center gap-2">
+                                <IconDownload /> {t.download}
+                            </button>
+                        </div>
+
+                        <div className="flex-1 overflow-auto bg-[#FAFAFA] p-8 relative">
+                             <div className="min-h-full mx-auto max-w-4xl bg-white shadow-subtle border border-gray-100 p-10 rounded-sm transition-transform duration-200 ease-out origin-top" style={{ transform: `scale(${zoom})` }}>
+                                <pre className="markdown-preview">{renderContent()}</pre>
+                            </div>
+                        </div>
+
+                        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 bg-[#1A1A1A] text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-5 z-20">
+                            <button onClick={zoomOut} className="hover:text-gray-300 transition-colors"><IconMinus /></button>
+                            <span className="text-xs font-mono w-8 text-center select-none text-white/80">{Math.round(zoom * 100)}%</span>
+                            <button onClick={zoomIn} className="hover:text-gray-300 transition-colors"><IconPlus /></button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function App() {
+            const [files, setFiles] = useState([]);
+            const [searchTerm, setSearchTerm] = useState("");
+            const [loading, setLoading] = useState(false);
+            const [statusMsg, setStatusMsg] = useState("");
+            const [previewFile, setPreviewFile] = useState(null);
+            const [selectedPaths, setSelectedPaths] = useState(new Set());
+            const [lang, setLang] = useState('zh'); // 语言状态: zh, en, ja
+            const fileInputRef = useRef(null);
+
+            const t = I18N[lang]; // 当前语言包
+
+            const handleFolderSelect = async (e) => {
+                const selectedFiles = e.target.files;
+                if (!selectedFiles || selectedFiles.length === 0) return;
+                setLoading(true);
+                setStatusMsg(t.processing); // Translation
+                const promises = [];
+                const existingPaths = new Set(files.map(f => f.path));
+                for (let i = 0; i < selectedFiles.length; i++) {
+                    const file = selectedFiles[i];
+                    const ext = '.' + file.name.split('.').pop().toLowerCase();
+                    const path = file.webkitRelativePath || file.name;
+                    if (ALLOWED_EXTENSIONS.includes(ext) && !existingPaths.has(path)) {
+                        promises.push(new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onload = (event) => resolve({
+                                name: file.name, path: path, content: event.target.result, size: file.size, type: ext.substring(1).toUpperCase()
+                            });
+                            reader.readAsText(file);
+                        }));
+                    }
+                }
+                try {
+                    const newFiles = await Promise.all(promises);
+                    setFiles(prev => [...prev, ...newFiles].sort((a, b) => a.name.localeCompare(b.name)));
+                    setStatusMsg("");
+                } catch (err) { setStatusMsg("Error"); } 
+                finally { setLoading(false); e.target.value = null; }
+            };
+
+            const handleSelectAll = (e) => {
+                setSelectedPaths(e.target.checked ? new Set(files.map(f => f.path)) : new Set());
+            };
+
+            const handleSelectOne = (path) => {
+                const newSelection = new Set(selectedPaths);
+                newSelection.has(path) ? newSelection.delete(path) : newSelection.add(path);
+                setSelectedPaths(newSelection);
+            };
+
+            const handleBatchDelete = () => {
+                if (selectedPaths.size > 0 && confirm(t.confirmDelete(selectedPaths.size))) {
+                    setFiles(files.filter(f => !selectedPaths.has(f.path)));
+                    setSelectedPaths(new Set());
+                }
+            };
+
+            const toggleLang = () => {
+                setLang(prev => prev === 'zh' ? 'en' : (prev === 'en' ? 'ja' : 'zh'));
+            };
+
+            const searchResults = useMemo(() => {
+                if (!searchTerm.trim()) return [];
+                if (files.length === 0) return [];
+                const term = searchTerm.toLowerCase();
+                const results = [];
+                files.forEach(file => {
+                    const contentLower = file.content.toLowerCase();
+                    let index = contentLower.indexOf(term);
+                    if (index !== -1) {
+                        const start = Math.max(0, index - 40);
+                        const end = Math.min(file.content.length, index + term.length + 60);
+                        let snippet = file.content.substring(start, end);
+                        snippet = snippet.replace(/\n/g, " ↵ ");
+                        results.push({ ...file, snippet: snippet, matchIndex: index });
+                    }
+                });
+                return results;
+            }, [files, searchTerm]);
+
+            const HighlightedText = ({ text, highlight }) => {
+                if (!highlight.trim()) return <span>{text}</span>;
+                const regex = new RegExp(`(${highlight})`, 'gi');
+                const parts = text.split(regex);
+                return (
+                    <span className="break-all">
+                        {parts.map((part, i) => part.toLowerCase() === highlight.toLowerCase() ? <span key={i} className="highlight">{part}</span> : <span key={i}>{part}</span>)}
+                    </span>
+                );
+            };
+
+            return (
+                <div className="min-h-screen p-8 md:p-16 app-container mx-auto">
+                    {/* Header */}
+                    <div className="flex items-end justify-between mb-8">
+                        <div>
+                            <h1 className="text-2xl font-bold text-theme-text tracking-tight flex items-center gap-3">
+                                <span className="w-2 h-6 bg-[#4A4A4A] rounded-sm"></span>
+                                DocSpace
+                            </h1>
+                        </div>
+                        <div className="flex gap-3">
+                            {selectedPaths.size > 0 && (
+                                <button onClick={handleBatchDelete} className="bg-theme-redBg text-theme-red hover:bg-red-100 border border-transparent px-4 py-2 rounded-md text-xs font-semibold flex items-center gap-2 transition-all">
+                                    <IconTrash /> {t.remove} ({selectedPaths.size})
+                                </button>
+                            )}
+                            <div className="relative">
+                                <input type="file" ref={fileInputRef} onChange={handleFolderSelect} webkitdirectory="true" directory="true" multiple className="hidden" />
+                                <button onClick={() => fileInputRef.current.click()} className="bg-theme-primary hover:bg-theme-primaryHover text-white px-4 py-2 rounded-md text-xs font-semibold shadow-subtle flex items-center gap-2 transition-all">
+                                    <IconFolder /> {t.import}
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Main Container */}
+                    <div className="bg-theme-surface rounded-lg border border-theme-border shadow-subtle overflow-hidden min-h-[600px] flex flex-col">
+                        
+                        {/* Search Bar */}
+                        <div className="border-b border-theme-border px-6 py-4 flex items-center gap-4">
+                            <div className="text-gray-400"><IconSearch /></div>
+                            <input 
+                                type="text" 
+                                placeholder={t.searchPlaceholder}
+                                className="w-full bg-transparent outline-none text-sm text-theme-text placeholder-gray-300 h-full font-medium"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                            />
+                            {loading && <span className="text-xs text-theme-primary font-bold animate-pulse">{t.processing}</span>}
+                        </div>
+
+                        {/* Content Area */}
+                        <div className={`flex-1 overflow-auto bg-white ${files.length === 0 ? 'flex items-center justify-center' : ''}`}>
+                            {files.length === 0 ? (
+                                <div className="flex flex-col items-center justify-center text-gray-200 gap-4">
+                                    <div className="p-4 rounded-full bg-gray-50 border border-gray-100"><IconFolder /></div>
+                                    <span className="text-xs font-medium text-gray-400">{t.noContent}</span>
+                                </div>
+                            ) : (
+                                !searchTerm ? (
+                                    <table className="w-full text-left text-xs border-collapse">
+                                        <thead className="sticky top-0 z-10 bg-theme-header text-theme-headerText font-medium border-b border-theme-border">
+                                            <tr>
+                                                <th className="px-6 py-3 w-12 text-center">
+                                                    <input type="checkbox" className="checkbox-custom" onChange={handleSelectAll} checked={selectedPaths.size === files.length} />
+                                                </th>
+                                                <th className="px-6 py-3 w-16 text-center">#</th>
+                                                <th className="px-6 py-3">{t.thName}</th>
+                                                <th className="px-6 py-3 w-32">{t.thSize}</th>
+                                                <th className="px-6 py-3 w-32">{t.thType}</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-gray-50">
+                                            {files.map((file, idx) => {
+                                                const isSelected = selectedPaths.has(file.path);
+                                                return (
+                                                    <tr 
+                                                        key={file.path} 
+                                                        className={`data-row cursor-default group h-10 transition-colors ${isSelected ? 'row-selected' : 'hover:bg-gray-50'}`}
+                                                        onDoubleClick={() => setPreviewFile(file)}
+                                                        onClick={() => handleSelectOne(file.path)}
+                                                    >
+                                                        <td className="px-6 text-center" onClick={(e) => e.stopPropagation()}>
+                                                            <input type="checkbox" className="checkbox-custom" checked={isSelected} onChange={() => handleSelectOne(file.path)} />
+                                                        </td>
+                                                        <td className={`px-6 text-center font-mono ${isSelected ? 'text-white' : 'text-gray-300'}`}>{idx + 1}</td>
+                                                        <td className="px-6">
+                                                            <div className="flex items-center gap-3 overflow-hidden">
+                                                                <span className={isSelected ? 'text-white' : 'text-gray-400'}><IconFile /></span>
+                                                                <span className={`truncate font-medium ${isSelected ? 'text-white' : 'text-theme-text'}`}>{file.name}</span>
+                                                            </div>
+                                                        </td>
+                                                        <td className={`px-6 ${isSelected ? 'text-white' : 'text-theme-subtext'}`}>{formatBytes(file.size)}</td>
+                                                        <td className="px-6">
+                                                            <span className={`inline-block px-1.5 py-0.5 rounded text-[10px] uppercase font-bold tracking-wide ${isSelected ? 'bg-white/20 text-white' : 'bg-gray-100 text-gray-500'}`}>
+                                                                {file.type}
+                                                            </span>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                ) : (
+                                    <div className="p-6 space-y-4">
+                                        <div className="text-xs text-gray-400 font-bold uppercase tracking-wider mb-2">{t.searchResult} ({searchResults.length})</div>
+                                        {searchResults.map((result, idx) => (
+                                            <div key={idx} onDoubleClick={() => setPreviewFile(result)} className="bg-white border border-gray-100 rounded-lg p-5 hover:border-theme-primary transition-all cursor-pointer group shadow-sm hover:shadow-md">
+                                                <div className="flex items-center gap-3 mb-3">
+                                                    <div className="text-gray-800"><IconFile /></div>
+                                                    <div className="font-bold text-sm text-theme-text">{result.name}</div>
+                                                    <span className="text-[10px] text-gray-400 border border-gray-200 px-1.5 py-0.5 rounded font-medium">{result.type}</span>
+                                                </div>
+                                                <div className="bg-gray-50 p-3 rounded-md text-xs text-gray-600 font-mono leading-relaxed border border-gray-100/50">
+                                                    <HighlightedText text={result.snippet} highlight={searchTerm} />
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )
+                            )}
+                        </div>
+                        
+                        {/* Footer (Option 2 Implementation) */}
+                        <div className="bg-white border-t border-theme-border px-6 py-2 text-[11px] text-gray-400 flex justify-between items-center font-medium">
+                            <div className="flex gap-4">
+                                <span>{files.length} {t.totalItemsSuffix}</span>
+                                <span className={selectedPaths.size > 0 ? 'text-theme-primary font-bold' : ''}>
+                                    {selectedPaths.size > 0 ? `${selectedPaths.size} ${t.selectedSuffix}` : t.noSelection}
+                                </span>
+                            </div>
+                            
+                            {/* Language Switcher */}
+                            <button 
+                                onClick={toggleLang} 
+                                className="flex items-center gap-1.5 hover:text-theme-text transition-colors cursor-pointer select-none"
+                                title="Switch Language / 切换语言 / 言語切り替え"
+                            >
+                                <IconGlobe />
+                                <span className="uppercase tracking-wide font-semibold text-[10px] pt-0.5">Language: {t.langName}</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {previewFile && <PreviewModal file={previewFile} searchTerm={searchTerm} onClose={() => setPreviewFile(null)} t={t} />}
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
