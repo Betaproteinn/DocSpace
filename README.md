@@ -1,3 +1,8 @@
+![Version](https://img.shields.io/badge/version-1-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Status](https://img.shields.io/badge/status-experimental-lightgrey)
+
+
 <img src="screenshot1.jpg" width="800" />
 
 # English
